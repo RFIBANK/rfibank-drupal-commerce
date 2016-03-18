@@ -1,0 +1,12 @@
+<?php
+
+/**
+ * @file
+ * Installation functions for Drupal Commerce Payment.
+ */
+
+
+function commerce_rficb_uninstall()
+{
+    variable_del('commerce_rficb_settings');
+}

@@ -1,0 +1,388 @@
+<?php
+
+/**
+ * Payment method callback: settings form.
+ */
+function commerce_rficb_settings_form($settings = NULL) {
+  $form = array();
+
+  $settings = (array) $settings + array(
+    'secret' => '',
+    'key' => '',
+    'success_message' => '',
+    'fail_message' => '',
+  );
+  
+  $form['key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('key'),
+    '#description' => t(' ключ платежа'),
+    '#default_value' => $settings['key'],
+  );
+  
+  $form['secret'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Secret key'),
+    '#description' => t(' секретный ключ'),
+    '#default_value' => $settings['secret'],
+  );
+
+   $form['success_message'] = array(
+    '#type' => 'textarea',
+    '#rows' => 3,
+    '#title' => t('Success message'),
+    '#description' => t('Enter optional text that will be displayed when payment succesful'),
+    '#default_value' => $settings['success_message'],
+  );
+
+  $form['fail_message'] = array(
+    '#type' => 'textarea',
+    '#rows' => 3,
+    '#title' => t('Fail message'),
+    '#description' => t('Enter optional text that will be displayed when payment fail'),
+    '#default_value' => $settings['fail_message'],
+  );
+
+  $form['url'] = array(
+    '#type' => 'fieldset',
+    '#collapsible' => TRUE,
+    '#title' => t('Urls (result, success, fail) for merchant interfase')
+  );
+
+  $form['url']['result'] = array(
+    '#type'          => 'textfield',
+    '#title'         => t('Result url'),
+    '#value' => url('rficb/result', array('absolute' => TRUE)),
+    '#description'   => t("Just for copy.")
+  );
+
+  $form['url']['success'] = array(
+    '#type'          => 'textfield',
+    '#title'         => t('Success url'),
+    '#value' => url('rficb/success', array('absolute' => TRUE)),
+    '#description'   => t("Just for copy.")
+  );
+  $form['url']['fail'] = array(
+    '#type'          => 'textfield',
+    '#title'         => t('Fail url'),
+    '#value' => url('rficb/fail', array('absolute' => TRUE)),
+    '#description'   => t("Just for copy.")
+  );
+  $form['#submit'][] = variable_set('commerce_rficb_settings', $form);
+
+  return $form;
+}
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_rficb_menu() {
+  $items['rficb/result'] = array(
+    'title' => 'Result of payment through Rficb Merchant',
+    'page callback' => 'commerce_rficb_result',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+   $items['rficb/success'] = array(
+     'title' => 'Successful payment',
+     'page callback' => 'commerce_rficb_success',
+     'access arguments' => array('access content'),
+     'type' => MENU_CALLBACK,
+  );
+   $items['rficb/fail'] = array(
+     'title' => 'Unsuccessful payment',
+     'page callback' => 'commerce_rficb_fail',
+     'access arguments' => array('access content'),
+     'type' => MENU_CALLBACK,
+   );
+  return $items;
+}
+
+/**
+ * Implements hook_commerce_payment_method_info().
+ */
+function commerce_rficb_commerce_payment_method_info() {
+  $payment_methods = array();
+  $payment_methods['commerce_rficb'] = array(
+    'base' => 'commerce_rficb',
+    'title' => t('Rficb'),
+    'short_title' => t('Rficb'),
+    'display_title' => t('Rficb'),
+    'description' => t('Integrates Rficb Merchant'),
+    'terminal' => FALSE,
+    'offsite' => TRUE,
+    'active' => TRUE,
+  );
+  return $payment_methods;
+}
+
+/**
+ * Payment method callback; generation callback for the payment submission form.
+ *
+ * @param $payment_method
+ *   An array of the current settings.
+ * @param $pane_values
+ *   The current values of the pane.
+ * @param $checkout_pane
+ *   The checkout pane array.
+ * @param $order
+ *   The order object.
+ *
+ * @return
+ *   A form snippet for the checkout pane.
+ */
+function commerce_rficb_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
+  $build = array();
+  $text = theme('image', array(
+    'path' => 'http://flag.rfibank.ru/cnstr_img/logo/full/color/rfi_h.png',
+    'alt' => t('Rficb'),
+    'title' => t('Rficb'),
+    'attributes' => array('class' => 'logo-rficb'),
+  ));
+  $text .= '<div class="desc">' . t('Rficb - Organization of the electronic payments receiving.') . '</div>';
+  $build['print_receipt'] = array('#markup' => $text);
+  return $build;
+}
+
+/**
+ * Payment method callback: redirect form.
+ *
+ * A wrapper around the module's general use function for building a submit form.
+ */
+function commerce_rficb_redirect_form($form, &$form_state, $order, $payment_method) {
+  return commerce_rficb_build_redirect_form($form, $form_state, $order, $payment_method['settings']);
+}
+
+/**
+ * Payment method callback; generation callback for the payment redirect form.
+ *
+ * Returns form elements that should be submitted to the redirected payment
+ * service; because of the array merge that happens upon return, the service’s
+ * URL that should receive the POST variables should be set in the #action
+ * property of the returned form array.
+ */
+function commerce_rficb_build_redirect_form($form, &$form_state, $order, $settings) {
+  // Choose a server to redirect.
+  $key = commerce_rficb_get_settings('key');
+  
+  $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  $currency = $wrapper->commerce_order_total->currency_code->value();
+  $amount = $wrapper->commerce_order_total->amount->value();
+  // Get real price.
+  $amount = commerce_currency_amount_to_decimal($amount, $currency);
+  $sitename=variable_get('site_name', 'Drupal');
+  $desc = t('Purchase from site !sitename. Order !ID.', array('!sitename' => $sitename, '!ID' => $order->order_id)); 
+
+  $form['#action'] = commerce_rficb_server_url();
+  $form['key'] = array(
+    '#type' => 'hidden',
+    '#value' => $key,
+  );
+  $form['cost'] = array(
+    '#type' => 'hidden',
+    '#value' => $amount,
+  );
+  $form['name'] = array(
+    '#type' => 'hidden',
+    '#value' => $desc,
+  );
+  $form['order_id'] = array(
+    '#type' => 'hidden',
+    '#value' => 0,
+  );  
+  $form['comment'] = array(
+    '#type' => 'hidden',
+    '#value' => $order->order_id,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Оплатить'),
+  );
+  return $form;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Removes drupal-related form_ids from final redirect.
+ */
+function commerce_rficb_form_commerce_checkout_form_payment_alter(&$form, &$form_state, $form_id){
+  unset($form["#form_id"]);
+  unset($form["form_id"]);
+  unset($form["form_token"]);
+  unset($form["form_build_id"]);
+}
+
+/**
+ * Helper to return setting from variable.
+ *
+ * @param $settings name of the setting's key.
+ *
+ * @return setting value.
+ */
+function commerce_rficb_get_settings($settings) {
+  $output = '';
+  $vars = variable_get('commerce_rficb_settings', '');
+  if (!empty($vars)) {
+    foreach ($vars as $key=>$var) {
+      if ($key == $settings) {
+        $output = $vars[$key]['#default_value'];
+        break;
+      }
+    }
+  }
+  return $output;
+}
+
+/**
+ * Success page callback handler.
+ */
+function commerce_rficb_success() {
+  $build = array();
+  if (isset($_POST['tid']) && isset($_POST['comment'])) {
+     $order_id   = $_POST['comment'];
+    
+    $message = t('Thank you, payment successful. Order #@shop_order,<br />', array('@shop_order' => $order_id));
+    drupal_set_message($message, 'status');
+    if ($message = commerce_rficb_get_settings('success_message')) {
+      $build['message_success']['#markup'] = $message;
+    }
+  }
+  else {
+    $build = MENU_ACCESS_DENIED;
+  }
+  return $build;
+}
+
+/**
+ * Fail page callback handler.
+ */
+function commerce_rficb_fail() {
+  drupal_set_message(t('Payment unsuccessful!'), 'error');
+  $build = array();
+  if ($message =  ('fail_message')) {
+    $build['message_fail']['#markup'] = $message;
+  }
+  return $build;
+}
+
+/**
+ * Page callback to receive payment notification from Rficb.
+ */
+function commerce_rficb_result() {
+  if (!empty($_POST)) {
+	  //$xml = base64_decode(str_replace(' ', '+', $_POST['xml']));
+	  //$sign = base64_decode(str_replace(' ', '+', $_POST['sign']));
+	  $parameters = array (
+            $_POST["tid"],
+            urldecode($_POST["name"]),
+            $_POST["comment"],
+            $_POST["partner_id"],
+            $_POST["service_id"],
+            $_POST["order_id"],
+            $_POST["type"],
+            $_POST["partner_income"],
+            $_POST["system_income"],
+            $_POST["test"],
+            commerce_rficb_get_settings('secret'),
+        );
+
+	  $order_id = $_POST['comment'];
+	  $amount = $_POST["system_income"];
+	  $trans_id = $_POST["tid"];
+		$given_check = $_POST["check"];
+		$generated_check = md5(join('',$parameters));
+	if ($given_check == $generated_check)
+	  {
+	    $vars = simplexml_load_string($xml);
+	    $order = commerce_order_load("$order_id");
+      $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+      $currency = $wrapper->commerce_order_total->currency_code->value();
+	      
+      $amounto = $wrapper->commerce_order_total->amount->value();
+      // Get real price.
+      $amounto = abs(commerce_currency_amount_to_decimal($amounto, $currency));
+
+	    if ($currency == 'RUR')
+	      $currency = 'RUB';
+	      
+	    $res = "";
+	    
+	    if ($amounto > abs($amount))
+	      $res = 'Payment sum is different to order\'s.';
+	    else
+	    {
+	        commerce_rficb_create_transaction($order_id, abs($amount), $trans_id);
+
+		      watchdog('commerce_rficb', 'Order #@order paid successfully: recieved (@am_rec) and real(@am_int).', array(
+	          '@order' => "$order_id",
+	          '@am_rec' => abs($amount),
+	          '@am_int' => $amounto,
+	          ), WATCHDOG_INFO);
+        
+	      echo 'OK';
+	      exit;
+	    }
+	  }
+	  else
+	    $res = 'Security check failed';
+	  
+	  if ($res != '')
+	  {
+		  watchdog('commerce_rficb', $res, array(), WATCHDOG_ERROR);
+		  echo $res;
+		}
+  }
+}
+
+/**
+ * Creates an Rficb payment transaction for the specified charge amount.
+ *
+ * @param $payment_method
+ *   The payment method instance object used to charge this payment.
+ * @param $order
+ *   The order object the payment applies to.
+ * @param $charge
+ *   An array indicating the amount and currency code to charge.
+ * @param $name
+ *   The name entered on the submission form.
+ */
+function commerce_rficb_create_transaction($order_id, $amount, $trans_id) {
+  $order = commerce_order_load($order_id);
+  $payment_method = commerce_payment_method_instance_load($order->data['payment_method']);
+
+  $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  $currency_code = $wrapper->commerce_order_total->currency_code->value();
+
+  $transaction = commerce_payment_transaction_new('commerce_rficb', $order->order_id);
+  $transaction->instance_id = $payment_method['instance_id'];
+  $transaction->amount = $amount*100;
+  $transaction->currency_code = $currency_code;
+  $transaction->remote_id = $trans_id;
+
+
+  // @doto Sheck statuses deeper
+  $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
+  $transaction->message = '';
+  $transaction->message_variables = array();
+
+  commerce_payment_transaction_save($transaction);
+  // @doto is this actually need?
+  rules_invoke_all('commerce_checkout_complete', $order);
+}
+
+/**
+ * Returns the URL to the specified Rficb server.
+ *
+ * @param $server
+ *   Either test or live indicating which server to get the URL for.
+ *
+ * @return
+ *   The URL to use to submit requests to the Rficb server.
+ */
+function commerce_rficb_server_url() {
+  return 'https://partner.rficb.ru/a1lite/input';
+}

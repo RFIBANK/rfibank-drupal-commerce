@@ -1,0 +1,8 @@
+name = Rficb Commerce - payment
+description = Implements rficb.ru payment services for use with Drupal Commerce.
+package = Commerce Rficb
+dependencies[] = commerce
+dependencies[] = commerce_payment
+dependencies[] = commerce_order
+core = 7.x
+version = 7.x-1.0-rc1
